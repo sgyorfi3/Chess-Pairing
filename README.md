@@ -1,5 +1,5 @@
 # Chess-Pairing
-In this project, we took pairings data from a Swiss Chess tournament to create a Linear Optimization program that updates the matchings for round 8. 
+In this class project, my teammates and I took pairings data from a Swiss Chess tournament to create a Linear Optimization program that updates the matchings for round 8. 
 
 The International Chess Federation - widely known as FIDE- is the governing body for the sport of chess. All highly regarded international chess competitions abide by the standards and practices set  by this organization. Some of the most important standards revolve around the pairing process used to match players together for each round of a tournament. The Swiss System of pair matching is one of the most widely adopted FIDE standards for matching players in an International chess competition. Unlike other matching methods, such as those used in round-robin style tournaments,  Swiss systems use fewer rounds, pair opponents with similar scores, and allow all competitors to play the same number of rounds, regardless of score. 
 
