@@ -1,0 +1,200 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[206]:
+
+
+import gurobipy as gp 
+import pandas as pd 
+
+#######################################
+######## ISYE 4133 Project 1 
+######## By Samuel Gyorfi, William (Reagan) Imstead, and Cameron Whaley
+######## Project Topic: Swiss Chess
+#######################################
+
+"""
+First, we need to load in the parameters. See our separate parameter creation python file, which
+we've used to transform the given data into a form more appropriate for our formulation, for more info.
+
+In short, we've created a csv for each parameter in a form that lists their indices and values. Next, we load 
+these csv files into an individual dataframe whose indices are the same as the variable (so we can sum later).
+Last, we pack each dataframe into a dictionary whose key is a string with the variable name.
+"""
+
+csv_files = {"bgir":['i','r','black'],"byegir":['i','r','bye'],"gijr":['i','j','r','played'],"si":['i','score'],"WDir":['i','r','withdrawal'],"wgir":['i','r','white'], "TPi":['i','Tp']} # the keys are the names of the csv files we created using the given data. the values are the column headers that we'll use below. note that column names are formatted so that the indices are on the left
+df_list = []
+df_param_names = []
+for file,cNames in csv_files.items():
+	df_file = pd.read_csv(file+"1"+".csv", header=0, names = cNames)
+	df_param_names.append(file.split('i')[0])
+	df_list.append(df_file)
+N = len(df_list[0].i.unique()) # getting number of players
+player_list = [num for num in range(1,N+1)]
+
+# making parameter-specific adjustments - primarily making columns that are parameter indices an index in the pandas dataframe:
+for param in range(len(csv_files.values())):
+	indices = list(csv_files.values())[param][:-1] # last column is the value of the variable
+	dataframe = df_list[param]
+	df_list[param] = dataframe.set_index(indices)
+
+# putting parameter dataframes into a dictionary form so it's more understandable which one I'm accessing:
+PARAMS = dict(zip(df_param_names, df_list)) # shoutout to stackoverflow for introducing me to zip
+
+
+# lastly, calculating/defining some non-indexed parameters from the data; note than N and last_round have already been defined above
+FF = sum(PARAMS['WD']['withdrawal']) # axis is column name in withdrawals csv
+L = 0 # this variable tells us whether it is the last round (relevant for constraint 5). There's no indication of where this will be in the data, so we chose to manually input it here. If we were to implement this for several rounds, we could ask the user to input this value
+last_round = PARAMS['bg'].sum(level='r').shape[0] # might want to validate this
+
+"""
+Now we have our input data in a workable form, we can create the model with gurobi
+"""
+model = gp.Model('model') # creating model instance
+
+""" DECISION VARIABLES """
+# creating decision variable indices #
+i_index = [i for i in range(1,N+1)]
+ij_index = [(i,j) for i in i_index for j in i_index if i!=j]
+
+# creating 'regular' decision variables #
+x = model.addVars(ij_index, name="x_",vtype=gp.GRB.BINARY) # indices are i,j
+REG = model.addVars(ij_index, name="REG_", vtype=gp.GRB.INTEGER) # indices are i,j
+w = model.addVars(i_index, name="w_",vtype=gp.GRB.BINARY) # index is i
+b = model.addVars(i_index, name="b_",vtype=gp.GRB.BINARY) # index is i
+bye = model.addVars(i_index, name="bye_",vtype=gp.GRB.BINARY) # index is i
+
+# creating decision variables used for 'big M' constraints #
+yA = model.addVars(i_index, name="yA_",vtype=gp.GRB.BINARY) # index is i
+yB = model.addVars(i_index, name="yB_",vtype=gp.GRB.BINARY) # index is i
+yC = model.addVars(i_index, name="yC_",vtype=gp.GRB.BINARY) # index is i
+yD = model.addVars(i_index, name="yD_",vtype=gp.GRB.BINARY) # index is i
+yE = model.addVars(i_index, name="yE_",vtype=gp.GRB.BINARY) # index is i
+
+""" OBJECTIVE FUNCTION """
+model.setObjective(x.sum('*','*') - REG.sum('*','*'), gp.GRB.MAXIMIZE) # '*' sums over all values of an index
+
+""" CONSTRAINTS """
+
+'''quick note on indexing:
+gurobi variables:
+	bye[i] gives you the bye variable with fpr player i
+	x[i,j] gives you the x variable with player pair i,j
+	x.sum(i,'*') gives you the x variable with pair i, summed over all opponents j
+pandas dataframes: they are stored within a dictionary called PARAMS
+	PARAMS['s'] locates the dataframe for parameter s
+	PARAMS['s'].loc[i,'score'][0] gives you the score parameter for player i. note that we are taking index [0] to get the value of a pandas series
+	PARAMS['g'].loc[i] gives a dataframe for parameter g with indices [j, r] and values indicating if some player i played in a round against an opponent (dependent on index)
+	PARAMS['g'].loc[i].loc[j].loc[r][0] gives the parameter for whether players i and j faced off in round r
+	PARAMS['g'].sum(level=['i','j']).loc[i].loc[j][0] gives the number of times players i and j have been paired in all rounds
+		note that by specifying the level, we are specifying the indices that will be preserved, meaning the complement
+		of the level (with respect to the index of the dataframe) is what will be summed over
+
+		also note that within the level, i and j are in quotes. This is because we are accessing the name of the 
+		index columnm rather than the index itself. These strings are dependent on the column names lists defined in the
+		csv_files dictionary
+	PARAMS['wg'].loc[([1,2,3],[4,5,6]),:] gives a dataframe telling you if players 1, 2, and 3 used white pieces in rounds 4, 5, and 6
+'''
+
+
+# In[207]:
+
+
+model.addConstrs((x[i,j] + x[j,i] <= 1 for i,j in ij_index),name="[0.1]")
+model.addConstrs((w[i] + w[j] - b[i] - b[j] <= 2*(1 - x[i,j]) for i,j in ij_index),name="[0.2]")
+model.addConstrs((b[i] + b[j] - w[i] - w[j] <= 2*(1 - x[i,j]) for i,j in ij_index),name="[0.3]")
+
+
+# In[208]:
+
+
+model.addConstrs((PARAMS['g'].sum(level=['i','j']).loc[i].loc[j][0] + x[i,j] <= 1 for i,j in ij_index),name="[1.1]")
+
+
+# In[209]:
+
+
+model.addConstr((1 - (N - FF)%2 + bye.sum('*') >= 1),name='[2.1]')
+model.addConstrs((x.sum(i,'*') + bye[i] <=1 for i in i_index),name="[2.2]")
+model.addConstrs((x.sum(i,'*') + 1 - (w[i] + b[i]) >= 1 for i in i_index),name="[2.3]")
+
+
+# In[210]:
+
+
+model.addConstrs((PARAMS['byeg'].sum(level='i').loc[i][0] + bye[i] + PARAMS['g'].loc[i].rename_axis(index={'j':'i'})['played'].multiply(PARAMS['WD']['withdrawal'], axis='index', fill_value=0).sum() <= 1 for i in i_index),name="[3.1]")
+
+
+# In[211]:
+
+
+model.addConstrs((x[i,j] * (PARAMS['s'].loc[i][0] - PARAMS['s'].loc[j][0]) <= REG[i,j] * 0.5 for i,j in ij_index),name="[4.1]")
+model.addConstrs((x[i,j] * (PARAMS['s'].loc[j][0] - PARAMS['s'].loc[i][0]) <= REG[i,j] * 0.5 for i,j in ij_index),name="[4.2]")
+
+
+# In[212]:
+
+
+model.addConstrs((PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] + w[i] - b[i] <= 2 + L*PARAMS['TP'].loc[i][0] for i in i_index),name="[5.1]")
+model.addConstrs((PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] + w[i] - b[i] >= -2 - L*PARAMS['TP'].loc[i][0] for i in i_index),name="[5.2]")
+
+
+# In[213]:
+
+
+df6_byes = PARAMS['byeg'].loc[(player_list,[last_round-1,last_round+1]),:].sum(level='i')
+model.addConstrs((PARAMS['wg'].loc[(player_list,[num for num in range(last_round - 1 - df6_byes.loc[i][0],last_round+1)]),:].sum(level='i').loc[i][0] + w[i] <= 2 for i in i_index),name="[6.1]")
+model.addConstrs((PARAMS['bg'].loc[(player_list,[num for num in range(last_round - 1 - df6_byes.loc[i][0],last_round+1)]),:].sum(level='i').loc[i][0] + b[i] <= 2 for i in i_index),name="[6.2]")
+
+
+# In[214]:
+
+
+model.addConstrs((1 - yA[i] + b[i] >= 1 for i in i_index),name="[7.1]")
+model.addConstrs((x[i,j] * (PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] - (PARAMS['wg'].sum(level='i').loc[j][0] - PARAMS['bg'].sum(level='i').loc[j][0])) <= 5 * yA[i] for i,j in ij_index),name="[7.2]")
+model.addConstrs((1 - yB[i] + w[i] >= 1 for i in i_index),name="[7.3]")
+model.addConstrs((x[i,j] * (PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] - (PARAMS['wg'].sum(level='i').loc[j][0] - PARAMS['bg'].sum(level='i').loc[j][0])) >= -5* yB[i] for i,j in ij_index),name="[7.4]")
+
+
+# In[216]:
+
+
+model.addConstrs((1 - yC[i] + 1 - yE[i] + yD[i] >= 1 for i in i_index),name="[8.1]")
+model.addConstrs((x[i,j] * (PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] - (PARAMS['wg'].sum(level='i').loc[j][0] - PARAMS['bg'].sum(level='i').loc[j][0])) + 1 <= 4 * yC[i] for i,j in ij_index),name="[8.2]")
+model.addConstrs((x[i,j] * (PARAMS['wg'].sum(level='i').loc[i][0] - PARAMS['bg'].sum(level='i').loc[i][0] - (PARAMS['wg'].sum(level='i').loc[j][0] - PARAMS['bg'].sum(level='i').loc[j][0])) - 1 >= -4 * yE[i] for i,j in ij_index),name="[8.3]")
+model.addConstrs((PARAMS['wg'].loc[(player_list, [num for num in range(last_round - PARAMS['byeg'].loc[i].loc[last_round][0], last_round+1)]),:].sum(level='i').loc[i][0] - PARAMS['bg'].loc[(player_list, [num for num in range(last_round - PARAMS['byeg'].loc[i].loc[last_round][0], last_round+1)]),:].sum(level='i').loc[i][0] + w[i] - b[i] >= -3 * (1 - yD[i]) for i in i_index),name="[8.4]")
+model.addConstrs((PARAMS['wg'].loc[(player_list, [num for num in range(last_round - PARAMS['byeg'].loc[i].loc[last_round][0], last_round+1)]),:].sum(level='i').loc[i][0] - PARAMS['bg'].loc[(player_list, [num for num in range(last_round - PARAMS['byeg'].loc[i].loc[last_round][0], last_round+1)]),:].sum(level='i').loc[i][0] + w[i] - b[i] <= 3 * (1 - yD[i]) for i in i_index),name="[8.5]")
+
+
+# In[217]:
+
+
+model.addConstrs((PARAMS['WD'].sum(level='i').loc[i][0] + x.sum(i,'*') == 1 for i in i_index),name="[12.1]")
+
+
+# In[218]:
+
+
+model.addConstrs((REG[i,j] >= 0 for i,j in ij_index),name="nn_REG")
+
+
+# In[219]:
+
+
+model.optimize()
+
+
+# In[238]:
+
+
+### NUMBER OF PAIRED PLAYERS:
+paired_players = [var.x for var in x.values()]
+print(sum(paired_players))
+
+
+# In[221]:
+
+
+# for v in model.getVars():
+#         print('%s %g' % (v.varName, v.x))
+
